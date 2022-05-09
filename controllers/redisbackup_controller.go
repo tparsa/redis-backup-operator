@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -25,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -36,6 +38,78 @@ import (
 type RedisBackupReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+}
+
+func getRedisBackupCronJob(rb backupv1.RedisBackup) *v1beta1.CronJob {
+	redisBackupSpec := rb.Spec
+	return &v1beta1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:      make(map[string]string),
+			Annotations: make(map[string]string),
+			Name:        rb.Name,
+			Namespace:   rb.Namespace,
+		},
+		Spec: v1beta1.CronJobSpec{
+			Schedule:          redisBackupSpec.Schedule,
+			ConcurrencyPolicy: v1beta1.ForbidConcurrent,
+			JobTemplate: v1beta1.JobTemplateSpec{
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							RestartPolicy: "Never",
+							Containers: []corev1.Container{
+								{
+									Name:  "backup",
+									Image: redisBackupSpec.Image,
+									Args: []string{
+										fmt.Sprintf("--uri=%s", redisBackupSpec.URI),
+										fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
+										"--output-stdout",
+										"--mode=dump",
+										fmt.Sprintf("--db=%d", redisBackupSpec.Db),
+									},
+									ImagePullPolicy: "Always",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func getRedisBackupCronJobPatch(rb backupv1.RedisBackup) *v1beta1.CronJob {
+	redisBackupSpec := rb.Spec
+	return &v1beta1.CronJob{
+		Spec: v1beta1.CronJobSpec{
+			Schedule:          redisBackupSpec.Schedule,
+			ConcurrencyPolicy: v1beta1.ForbidConcurrent,
+			JobTemplate: v1beta1.JobTemplateSpec{
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							RestartPolicy: "Never",
+							Containers: []corev1.Container{
+								{
+									Name:  "backup",
+									Image: redisBackupSpec.Image,
+									Args: []string{
+										fmt.Sprintf("--uri=%s", redisBackupSpec.URI),
+										fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
+										"--output-stdout",
+										"--mode=dump",
+										fmt.Sprintf("--db=%d", redisBackupSpec.Db),
+									},
+									ImagePullPolicy: "Always",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 //+kubebuilder:rbac:groups=backup.yektanet.tech,resources=redisbackups,verbs=get;list;watch;create;update;patch;delete
@@ -53,54 +127,24 @@ type RedisBackupReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.2/pkg/reconcile
 func (r *RedisBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
-	var redisBackup backupv1.RedisBackup
-	if err := r.Get(ctx, req.NamespacedName, &redisBackup); err != nil {
+	var rb backupv1.RedisBackup
+	if err := r.Get(ctx, req.NamespacedName, &rb); err != nil {
 		log.Error(err, "unable to fetch RedisBackup")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	var childCronJob v1beta1.CronJob
 	if err := r.Get(ctx, req.NamespacedName, &childCronJob); err != nil {
-		name := redisBackup.Name
-		log.Info(fmt.Sprintf("%s CronJob not found. creating CronJob ...", name))
-		redisBackupSpec := redisBackup.Spec
-		childCronJob = v1beta1.CronJob{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels:      make(map[string]string),
-				Annotations: make(map[string]string),
-				Name:        name,
-				Namespace:   redisBackup.Namespace,
-			},
-			Spec: v1beta1.CronJobSpec{
-				Schedule:          redisBackupSpec.Schedule,
-				ConcurrencyPolicy: v1beta1.ForbidConcurrent,
-				JobTemplate: v1beta1.JobTemplateSpec{
-					Spec: batchv1.JobSpec{
-						Template: corev1.PodTemplateSpec{
-							Spec: corev1.PodSpec{
-								RestartPolicy: "Never",
-								Containers: []corev1.Container{
-									{
-										Name:  "backup",
-										Image: redisBackupSpec.Image,
-										Args: []string{
-											fmt.Sprintf("--uri=%s", redisBackupSpec.URI),
-											fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
-											"--output-stdout",
-											"--mode=dump",
-											fmt.Sprintf("--db=%d", redisBackupSpec.Db),
-										},
-										ImagePullPolicy: "Always",
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		}
+		log.Info(fmt.Sprintf("%s %s CronJob not found. creating CronJob ...", err, rb.Name))
+		childCronJob = *getRedisBackupCronJob(rb)
 		if err := r.Create(ctx, &childCronJob); err != nil {
 			log.Error(err, "unable to create CronJob for RedisBackup", "cronjob", childCronJob)
+			return ctrl.Result{}, err
+		}
+	} else {
+		patch, _ := json.Marshal(*getRedisBackupCronJob(rb))
+		if err := r.Patch(ctx, &childCronJob, client.RawPatch(types.MergePatchType, patch)); err != nil {
+			log.Error(err, "Couldn't patch CronJob for RedisBackup", "cronjob", childCronJob)
 			return ctrl.Result{}, err
 		}
 	}
