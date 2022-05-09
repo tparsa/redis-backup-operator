@@ -3,4 +3,14 @@ layout:
 - go.kubebuilder.io/v3
 projectName: redis-backup-operator
 repo: github.com/tparsa/redis-backup-operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: yektanet.tech
+  group: backup
+  kind: RedisBackup
+  path: github.com/tparsa/redis-backup-operator/api/v1
+  version: v1
 version: "3"
