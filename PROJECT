@@ -1,0 +1,6 @@
+domain: yektanet.tech
+layout:
+- go.kubebuilder.io/v3
+projectName: redis-backup-operator
+repo: github.com/tparsa/redis-backup-operator
+version: "3"
