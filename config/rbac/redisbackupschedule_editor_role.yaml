@@ -1,0 +1,24 @@
+# permissions for end users to edit redisbackupschedules.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: redisbackupschedule-editor-role
+rules:
+- apiGroups:
+  - backup.yektanet.tech
+  resources:
+  - redisbackupschedules
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - backup.yektanet.tech
+  resources:
+  - redisbackupschedules/status
+  verbs:
+  - get

@@ -23,8 +23,8 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// RedisBackupSpec defines the desired state of RedisBackup
-type RedisBackupSpec struct {
+// RedisBackupScheduleSpec defines the desired state of RedisBackupSchedule
+type RedisBackupScheduleSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
@@ -35,8 +35,8 @@ type RedisBackupSpec struct {
 	Schedule  string `json:"schedule,omitempty"`
 }
 
-// RedisBackupStatus defines the observed state of RedisBackup
-type RedisBackupStatus struct {
+// RedisBackupScheduleStatus defines the observed state of RedisBackupSchedule
+type RedisBackupScheduleStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 }
@@ -44,24 +44,24 @@ type RedisBackupStatus struct {
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 
-// RedisBackup is the Schema for the redisbackups API
-type RedisBackup struct {
+// RedisBackupSchedule is the Schema for the redisbackupschedules API
+type RedisBackupSchedule struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   RedisBackupSpec   `json:"spec,omitempty"`
-	Status RedisBackupStatus `json:"status,omitempty"`
+	Spec   RedisBackupScheduleSpec   `json:"spec,omitempty"`
+	Status RedisBackupScheduleStatus `json:"status,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 
-// RedisBackupList contains a list of RedisBackup
-type RedisBackupList struct {
+// RedisBackupScheduleList contains a list of RedisBackupSchedule
+type RedisBackupScheduleList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []RedisBackup `json:"items"`
+	Items           []RedisBackupSchedule `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&RedisBackup{}, &RedisBackupList{})
+	SchemeBuilder.Register(&RedisBackupSchedule{}, &RedisBackupScheduleList{})
 }

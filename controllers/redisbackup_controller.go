@@ -20,9 +20,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
-	"k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,38 +40,24 @@ type RedisBackupReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-func getRedisBackupCronJob(rb backupv1.RedisBackup) *v1beta1.CronJob {
+func getRedisBackupJobSpec(rb *backupv1.RedisBackup) *batchv1.JobSpec {
 	redisBackupSpec := rb.Spec
-	return &v1beta1.CronJob{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels:      make(map[string]string),
-			Annotations: make(map[string]string),
-			Name:        rb.Name,
-			Namespace:   rb.Namespace,
-		},
-		Spec: v1beta1.CronJobSpec{
-			Schedule:          redisBackupSpec.Schedule,
-			ConcurrencyPolicy: v1beta1.ForbidConcurrent,
-			JobTemplate: v1beta1.JobTemplateSpec{
-				Spec: batchv1.JobSpec{
-					Template: corev1.PodTemplateSpec{
-						Spec: corev1.PodSpec{
-							RestartPolicy: "Never",
-							Containers: []corev1.Container{
-								{
-									Name:  "backup",
-									Image: redisBackupSpec.Image,
-									Args: []string{
-										fmt.Sprintf("--uri=%s", redisBackupSpec.URI),
-										fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
-										"--output-stdout",
-										"--mode=dump",
-										fmt.Sprintf("--db=%d", redisBackupSpec.Db),
-									},
-									ImagePullPolicy: "Always",
-								},
-							},
+	return &batchv1.JobSpec{
+		Template: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				RestartPolicy: "Never",
+				Containers: []corev1.Container{
+					{
+						Name:  "backup",
+						Image: redisBackupSpec.Image,
+						Args: []string{
+							fmt.Sprintf("--uri=%s", redisBackupSpec.URI),
+							fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
+							"--output-stdout",
+							"--mode=dump",
+							fmt.Sprintf("--db=%d", redisBackupSpec.Db),
 						},
+						ImagePullPolicy: "Always",
 					},
 				},
 			},
@@ -79,36 +65,26 @@ func getRedisBackupCronJob(rb backupv1.RedisBackup) *v1beta1.CronJob {
 	}
 }
 
-func getRedisBackupCronJobPatch(rb backupv1.RedisBackup) *v1beta1.CronJob {
-	redisBackupSpec := rb.Spec
-	return &v1beta1.CronJob{
-		Spec: v1beta1.CronJobSpec{
-			Schedule:          redisBackupSpec.Schedule,
-			ConcurrencyPolicy: v1beta1.ForbidConcurrent,
-			JobTemplate: v1beta1.JobTemplateSpec{
-				Spec: batchv1.JobSpec{
-					Template: corev1.PodTemplateSpec{
-						Spec: corev1.PodSpec{
-							RestartPolicy: "Never",
-							Containers: []corev1.Container{
-								{
-									Name:  "backup",
-									Image: redisBackupSpec.Image,
-									Args: []string{
-										fmt.Sprintf("--uri=%s", redisBackupSpec.URI),
-										fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
-										"--output-stdout",
-										"--mode=dump",
-										fmt.Sprintf("--db=%d", redisBackupSpec.Db),
-									},
-									ImagePullPolicy: "Always",
-								},
-							},
-						},
-					},
-				},
+func getRedisBackupJobWithName(rb *backupv1.RedisBackup, name string) *batchv1.Job {
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: rb.Namespace,
+			Labels: map[string]string{
+				"backup.yektanet.tech/redisbackup": rb.Name,
 			},
 		},
+		Spec: *getRedisBackupJobSpec(rb),
+	}
+}
+
+func getRedisBackupJob(rb *backupv1.RedisBackup) *batchv1.Job {
+	return getRedisBackupJobWithName(rb, fmt.Sprintf("%s-%d", rb.Name, time.Now().Unix()))
+}
+
+func getRedisBackupJobPatch(rb *backupv1.RedisBackup) *batchv1.Job {
+	return &batchv1.Job{
+		Spec: *getRedisBackupJobSpec(rb),
 	}
 }
 
@@ -133,19 +109,44 @@ func (r *RedisBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	var childCronJob v1beta1.CronJob
-	if err := r.Get(ctx, req.NamespacedName, &childCronJob); err != nil {
-		log.Info(fmt.Sprintf("%s %s CronJob not found. creating CronJob ...", err, rb.Name))
-		childCronJob = *getRedisBackupCronJob(rb)
-		if err := r.Create(ctx, &childCronJob); err != nil {
-			log.Error(err, "unable to create CronJob for RedisBackup", "cronjob", childCronJob)
+	if _, ok := rb.Labels["backup.yektanet.tech/job"]; !ok {
+		job := *getRedisBackupJob(&rb)
+		if err := r.Create(ctx, &job); err != nil {
+			log.Error(err, "unable to create Job for RedisBackup", "job", job)
 			return ctrl.Result{}, err
 		}
 	} else {
-		patch, _ := json.Marshal(*getRedisBackupCronJob(rb))
-		if err := r.Patch(ctx, &childCronJob, client.RawPatch(types.MergePatchType, patch)); err != nil {
-			log.Error(err, "Couldn't patch CronJob for RedisBackup", "cronjob", childCronJob)
-			return ctrl.Result{}, err
+		jobName := rb.Labels["backup.yektanet.tech/job"]
+		var job batchv1.Job
+		if err := r.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: jobName}, &job); err != nil {
+			log.Info(fmt.Sprintf("%s %s Job not found. creating Job ...", err, rb.Name))
+			job = *getRedisBackupJobWithName(&rb, jobName)
+			if err := r.Create(ctx, &job); err != nil {
+				log.Error(err, "unable to create Job for RedisBackup", "job", job)
+				return ctrl.Result{}, err
+			}
+			patchObj := metav1.ObjectMeta{Labels: map[string]string{"backup.yektanet.tech/job": job.Name}}
+			patch, err := json.Marshal(patchObj)
+			if err != nil {
+				log.Error(err, "Unable to marshal patch", "patchObj", patchObj)
+				return ctrl.Result{}, err
+			}
+			if err := r.Patch(ctx, &rb, client.RawPatch(types.MergePatchType, patch)); err != nil {
+				log.Error(err, "Unable to patch RedisBackup", "redisbackup", rb)
+				return ctrl.Result{}, err
+			}
+		} else {
+			patchObj := *getRedisBackupJobPatch(&rb)
+			patch, err := json.Marshal(patchObj)
+			if err != nil {
+				log.Error(err, "Unable to marshal patch", "patchObj", patchObj)
+				return ctrl.Result{}, err
+			}
+
+			if err := r.Patch(ctx, &job, client.RawPatch(types.MergePatchType, patch)); err != nil {
+				log.Error(err, "Couldn't patch Job for RedisBackup", "job", job)
+				return ctrl.Result{}, err
+			}
 		}
 	}
 

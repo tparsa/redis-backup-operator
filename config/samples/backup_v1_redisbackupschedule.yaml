@@ -1,9 +1,10 @@
 apiVersion: backup.yektanet.tech/v1
-kind: RedisBackup
+kind: RedisBackupSchedule
 metadata:
-  name: redisbackup-sample
+  name: redisbackupschedule-sample
 spec:
   image: tparsa/redis-backup:b32ae43
   uri: redis://test:6379
   redistype: single
   db: 0
+  schedule: "* * * * *"

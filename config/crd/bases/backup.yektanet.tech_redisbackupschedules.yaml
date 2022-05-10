@@ -5,20 +5,21 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.8.0
   creationTimestamp: null
-  name: redisbackups.backup.yektanet.tech
+  name: redisbackupschedules.backup.yektanet.tech
 spec:
   group: backup.yektanet.tech
   names:
-    kind: RedisBackup
-    listKind: RedisBackupList
-    plural: redisbackups
-    singular: redisbackup
+    kind: RedisBackupSchedule
+    listKind: RedisBackupScheduleList
+    plural: redisbackupschedules
+    singular: redisbackupschedule
   scope: Namespaced
   versions:
   - name: v1
     schema:
       openAPIV3Schema:
-        description: RedisBackup is the Schema for the redisbackups API
+        description: RedisBackupSchedule is the Schema for the redisbackupschedules
+          API
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -33,7 +34,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: RedisBackupSpec defines the desired state of RedisBackup
+            description: RedisBackupScheduleSpec defines the desired state of RedisBackupSchedule
             properties:
               db:
                 format: int32
@@ -48,7 +49,7 @@ spec:
                 type: string
             type: object
           status:
-            description: RedisBackupStatus defines the observed state of RedisBackup
+            description: RedisBackupScheduleStatus defines the observed state of RedisBackupSchedule
             type: object
         type: object
     served: true
