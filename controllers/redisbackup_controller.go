@@ -157,5 +157,6 @@ func (r *RedisBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 func (r *RedisBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&backupv1.RedisBackup{}).
+		Owns(&batchv1.Job{}).
 		Complete(r)
 }
