@@ -188,7 +188,9 @@ func (r *RedisBackupScheduleReconciler) Reconcile(ctx context.Context, req ctrl.
 
 			controllerutil.RemoveFinalizer(&rbs, finalizerName)
 			if err := r.Update(ctx, &rbs); err != nil {
-				return ctrl.Result{}, err
+				if !k8serrors.IsNotFound(err) {
+					return ctrl.Result{}, err
+				}
 			}
 		}
 		return ctrl.Result{}, nil
