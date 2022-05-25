@@ -24,6 +24,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -164,7 +165,9 @@ func (r *RedisBackupScheduleReconciler) Reconcile(ctx context.Context, req ctrl.
 	log := log.FromContext(ctx)
 	var rbs backupv1.RedisBackupSchedule
 	if err := r.Get(ctx, req.NamespacedName, &rbs); err != nil {
-		log.Error(err, "unable to fetch RedisBackupSchedule")
+		if !k8serrors.IsNotFound(err) {
+			log.Error(err, "unable to fetch RedisBackupSchedule")
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
