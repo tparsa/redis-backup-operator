@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	backupv1 "github.com/tparsa/redis-backup-operator/api/v1"
@@ -89,9 +91,41 @@ func getRedisBackupJobPatch(rb *backupv1.RedisBackup) *batchv1.Job {
 	}
 }
 
+func (r *RedisBackupReconciler) deleteExternalResources(ctx context.Context, rb *backupv1.RedisBackup) error {
+	// Delete redisBackup and cronJob
+	log := log.FromContext(ctx)
+
+	var jl batchv1.JobList
+	if err := r.List(ctx, &jl, client.InNamespace(rb.Namespace), client.MatchingFields{".metadata.redisbackup.controller": rb.Name}); err != nil {
+		log.Error(err, "unable to list child Jobs")
+		return err
+	}
+
+	log.Info(fmt.Sprintf("Found %d Jobs to delete", len(jl.Items)))
+
+	for _, cj := range jl.Items {
+		if err := r.Delete(ctx, &cj); err != nil {
+			if !k8serrors.IsNotFound(err) {
+				log.Error(err, "unable to delete Job")
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func reasonAndCodeForError(err error) (metav1.StatusReason, int32) {
+	if status := k8serrors.APIStatus(nil); errors.As(err, &status) {
+		return status.Status().Reason, status.Status().Code
+	}
+	return metav1.StatusReasonUnknown, 0
+}
+
 //+kubebuilder:rbac:groups=backup.yektanet.tech,resources=redisbackups,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=backup.yektanet.tech,resources=redisbackups/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=backup.yektanet.tech,resources=redisbackups/finalizers,verbs=update
+//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;create;update;patch;delete
+//+kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -112,10 +146,48 @@ func (r *RedisBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	finalizerName := "backup.yektanet.tech/finalizer"
+
+	if rb.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(&rb, finalizerName) {
+			controllerutil.AddFinalizer(&rb, finalizerName)
+			if err := r.Update(ctx, &rb); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		if controllerutil.ContainsFinalizer(&rb, finalizerName) {
+			if err := r.deleteExternalResources(ctx, &rb); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			controllerutil.RemoveFinalizer(&rb, finalizerName)
+			if err := r.Update(ctx, &rb); err != nil {
+				if !k8serrors.IsConflict(err) || !k8serrors.IsNotFound(err) {
+					return ctrl.Result{}, err
+				}
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
 	if _, ok := rb.Labels["backup.yektanet.tech/job"]; !ok {
 		job := *getRedisBackupJob(&rb)
+		log.Info(fmt.Sprintf("creating Job %s for RedisBackup %s ...", job.Name, rb.Name))
+		if err := ctrl.SetControllerReference(&rb, &job, r.Scheme); err != nil {
+			log.Error(err, "unable to set controller reference on Job")
+			return ctrl.Result{}, err
+		}
 		if err := r.Create(ctx, &job); err != nil {
 			log.Error(err, "unable to create Job for RedisBackup", "job", job)
+			return ctrl.Result{}, err
+		}
+		if rb.Labels == nil {
+			rb.Labels = make(map[string]string)
+		}
+		rb.Labels["backup.yektanet.tech/job"] = job.Name
+		if err := r.Update(ctx, &rb); err != nil {
+			log.Error(err, "unable to set Job name label on RedisBackup", "RedisBackup", rb)
 			return ctrl.Result{}, err
 		}
 	} else {
@@ -124,10 +196,17 @@ func (r *RedisBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if err := r.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: jobName}, &job); err != nil {
 			log.Info(fmt.Sprintf("%s %s Job not found. creating Job ...", err, rb.Name))
 			job = *getRedisBackupJobWithName(&rb, jobName)
+
+			if err := ctrl.SetControllerReference(&rb, &job, r.Scheme); err != nil {
+				log.Error(err, "unable to set controller reference on Job")
+				return ctrl.Result{}, err
+			}
+
 			if err := r.Create(ctx, &job); err != nil {
 				log.Error(err, "unable to create Job for RedisBackup", "job", job)
 				return ctrl.Result{}, err
 			}
+
 			patchObj := metav1.ObjectMeta{Labels: map[string]string{"backup.yektanet.tech/job": job.Name}}
 			patch, err := json.Marshal(patchObj)
 			if err != nil {
@@ -158,8 +237,28 @@ func (r *RedisBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RedisBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := r.setupJobIndexer(mgr); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&backupv1.RedisBackup{}).
 		Owns(&batchv1.Job{}).
 		Complete(r)
+}
+
+func (r *RedisBackupReconciler) setupJobIndexer(mgr ctrl.Manager) error {
+	return mgr.GetFieldIndexer().IndexField(context.Background(), &batchv1.Job{}, ".metadata.redisbackup.controller", func(rawObj client.Object) []string {
+		j := rawObj.(*batchv1.Job)
+		owner := metav1.GetControllerOf(j)
+		if owner == nil {
+			return nil
+		}
+
+		if owner.Kind != "RedisBackup" {
+			return nil
+		}
+
+		return []string{owner.Name}
+	})
 }
