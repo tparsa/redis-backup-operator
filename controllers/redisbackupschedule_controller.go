@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	backupv1 "github.com/tparsa/redis-backup-operator/api/v1"
@@ -92,7 +93,7 @@ func getRedisBackupCronJobPatch(rbs *backupv1.RedisBackupSchedule) *v1beta1.Cron
 func getRedisBackup(rbs *backupv1.RedisBackupSchedule, job *batchv1.Job) *backupv1.RedisBackup {
 	return &backupv1.RedisBackup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      rbs.Name,
+			Name:      job.Name,
 			Namespace: rbs.Namespace,
 			Labels: map[string]string{
 				"backup.yektanet.tech/redisbackupschedule": rbs.Name,
@@ -107,6 +108,40 @@ func getRedisBackup(rbs *backupv1.RedisBackupSchedule, job *batchv1.Job) *backup
 			Db:        rbs.Spec.Db,
 		},
 	}
+}
+
+func (r *RedisBackupScheduleReconciler) deleteExternalResources(ctx context.Context, rbs *backupv1.RedisBackupSchedule) error {
+	// Delete redisBackup and cronJob
+	log := log.FromContext(ctx)
+	var rbl backupv1.RedisBackupList
+	if err := r.List(ctx, &rbl, client.InNamespace(rbs.Namespace), client.MatchingFields{".metadata.controller": rbs.Name}); err != nil {
+		log.Info(fmt.Sprintf("unable to list child RedisBackups %s", err))
+	}
+
+	log.Info(fmt.Sprintf("Found %d RedisBackups to delete", len(rbl.Items)))
+
+	for _, rb := range rbl.Items {
+		if err := r.Delete(ctx, &rb); err != nil {
+			log.Error(err, "unable to delete RedisBackup")
+			return err
+		}
+	}
+
+	var cjl v1beta1.CronJobList
+	if err := r.List(ctx, &cjl, client.InNamespace(rbs.Namespace), client.MatchingFields{".metadata.controller": rbs.Name}); err != nil {
+		log.Error(err, "unable to list child CronJobs")
+		return err
+	}
+
+	log.Info(fmt.Sprintf("Found %d CronJobs to delete", len(cjl.Items)))
+
+	for _, cj := range cjl.Items {
+		if err := r.Delete(ctx, &cj); err != nil {
+			log.Error(err, "unable to delete CronJob")
+			return err
+		}
+	}
+	return nil
 }
 
 //+kubebuilder:rbac:groups=backup.yektanet.tech,resources=redisbackupschedules,verbs=get;list;watch;create;update;patch;delete
@@ -129,8 +164,31 @@ func (r *RedisBackupScheduleReconciler) Reconcile(ctx context.Context, req ctrl.
 	log := log.FromContext(ctx)
 	var rbs backupv1.RedisBackupSchedule
 	if err := r.Get(ctx, req.NamespacedName, &rbs); err != nil {
-		log.Error(err, "unable to fetch RedisBackup")
+		log.Error(err, "unable to fetch RedisBackupSchedule")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	finalizerName := "backup.yektanet.tech/finalizer"
+
+	if rbs.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !controllerutil.ContainsFinalizer(&rbs, finalizerName) {
+			controllerutil.AddFinalizer(&rbs, finalizerName)
+			if err := r.Update(ctx, &rbs); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		if controllerutil.ContainsFinalizer(&rbs, finalizerName) {
+			if err := r.deleteExternalResources(ctx, &rbs); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			controllerutil.RemoveFinalizer(&rbs, finalizerName)
+			if err := r.Update(ctx, &rbs); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
 	}
 
 	var childCronJob v1beta1.CronJob
@@ -168,6 +226,12 @@ func (r *RedisBackupScheduleReconciler) Reconcile(ctx context.Context, req ctrl.
 			log.Info(fmt.Sprintf("%s %s RedisBackup not found. creating RedisBackup ...", err, rbs.Name))
 
 			rb = *getRedisBackup(&rbs, &job)
+
+			if err := ctrl.SetControllerReference(&rbs, &rb, r.Scheme); err != nil {
+				log.Error(err, "unable to set controller reference on RedisBackup")
+				return ctrl.Result{}, err
+			}
+
 			if err := r.Create(ctx, &rb); err != nil {
 				log.Error(err, "unable to create RedisBackup for RedisBackupSchedule", "RedisBackup", rb)
 				return ctrl.Result{}, err
@@ -180,9 +244,30 @@ func (r *RedisBackupScheduleReconciler) Reconcile(ctx context.Context, req ctrl.
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RedisBackupScheduleReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &batchv1.Job{}, ".metadata.controller", func(rawObj client.Object) []string {
-		job := rawObj.(*batchv1.Job)
-		owner := metav1.GetControllerOf(job)
+	if err := setupJobIndexer(mgr); err != nil {
+		return err
+	}
+
+	if err := setupCronJobIndexer(mgr); err != nil {
+		return err
+	}
+
+	if err := setupRedisBackupIndexer(mgr); err != nil {
+		return err
+	}
+
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&backupv1.RedisBackupSchedule{}).
+		Owns(&backupv1.RedisBackup{}).
+		Owns(&v1beta1.CronJob{}).
+		Owns(&batchv1.Job{}).
+		Complete(r)
+}
+
+func setupJobIndexer(mgr ctrl.Manager) error {
+	return mgr.GetFieldIndexer().IndexField(context.Background(), &batchv1.Job{}, ".metadata.controller", func(rawObj client.Object) []string {
+		j := rawObj.(*batchv1.Job)
+		owner := metav1.GetControllerOf(j)
 		if owner == nil {
 			return nil
 		}
@@ -192,11 +277,38 @@ func (r *RedisBackupScheduleReconciler) SetupWithManager(mgr ctrl.Manager) error
 		}
 
 		return []string{owner.Name}
-	}); err != nil {
-		return err
-	}
+	})
+}
 
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&backupv1.RedisBackupSchedule{}).
-		Complete(r)
+func setupCronJobIndexer(mgr ctrl.Manager) error {
+	return mgr.GetFieldIndexer().IndexField(context.Background(), &v1beta1.CronJob{}, ".metadata.controller", func(rawObj client.Object) []string {
+		cj := rawObj.(*v1beta1.CronJob)
+		owner := metav1.GetControllerOf(cj)
+		if owner == nil {
+			return nil
+		}
+
+		if owner.Kind != "RedisBackupSchedule" {
+			return nil
+		}
+
+		return []string{owner.Name}
+	})
+}
+
+func setupRedisBackupIndexer(mgr ctrl.Manager) error {
+	return mgr.GetFieldIndexer().IndexField(context.Background(), &backupv1.RedisBackup{}, ".metadata.controller", func(rawObj client.Object) []string {
+		rb := rawObj.(*backupv1.RedisBackup)
+		owner := metav1.GetControllerOf(rb)
+
+		if owner == nil {
+			return nil
+		}
+
+		if owner.Kind != "RedisBackupSchedule" {
+			return nil
+		}
+
+		return []string{owner.Name}
+	})
 }
