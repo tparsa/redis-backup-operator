@@ -169,9 +169,9 @@ func (r *RedisBackupScheduleReconciler) deleteExternalResources(ctx context.Cont
 //+kubebuilder:rbac:groups=backup.yektanet.tech,resources=redisbackupschedules,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=backup.yektanet.tech,resources=redisbackupschedules/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=backup.yektanet.tech,resources=redisbackupschedules/finalizers,verbs=update
-//+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;create;update;patch;delete
+//+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=cronjobs/status,verbs=get
-//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;delete
+//+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
