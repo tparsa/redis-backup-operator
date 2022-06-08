@@ -44,9 +44,40 @@ type RedisBackupScheduleReconciler struct {
 
 func getRedisBackupScheduleCronJobSpec(rbs *backupv1.RedisBackupSchedule) *v1beta1.CronJobSpec {
 	redisBackupSpec := rbs.Spec
+	args := []string{
+		fmt.Sprintf("--name=%s-%s", rbs.Namespace, rbs.Name),
+		fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
+		fmt.Sprintf("--bucket=%s", redisBackupSpec.Bucket),
+		fmt.Sprintf("--endpoint-url=%s", redisBackupSpec.S3EndpointUrl),
+		fmt.Sprintf("--db=%d", redisBackupSpec.Db),
+	}
+	if redisBackupSpec.URI != "" {
+		args = append(args, fmt.Sprintf("--uri=%s", redisBackupSpec.URI))
+	}
+	envFrom := []corev1.EnvFromSource{}
+	if redisBackupSpec.URISecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: redisBackupSpec.URISecretName,
+				},
+			},
+		})
+	}
+	if redisBackupSpec.AWSConfigSecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: redisBackupSpec.AWSConfigSecretName,
+				},
+			},
+		})
+	}
+	var l int32 = 3
 	return &v1beta1.CronJobSpec{
-		Schedule:          redisBackupSpec.Schedule,
-		ConcurrencyPolicy: v1beta1.ForbidConcurrent,
+		Schedule:                   redisBackupSpec.Schedule,
+		SuccessfulJobsHistoryLimit: &l,
+		ConcurrencyPolicy:          v1beta1.ForbidConcurrent,
 		JobTemplate: v1beta1.JobTemplateSpec{
 			Spec: batchv1.JobSpec{
 				Template: corev1.PodTemplateSpec{
@@ -54,16 +85,11 @@ func getRedisBackupScheduleCronJobSpec(rbs *backupv1.RedisBackupSchedule) *v1bet
 						RestartPolicy: "Never",
 						Containers: []corev1.Container{
 							{
-								Name:  "backup",
-								Image: redisBackupSpec.Image,
-								Args: []string{
-									fmt.Sprintf("--uri=%s", redisBackupSpec.URI),
-									fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
-									"--output-stdout",
-									"--mode=dump",
-									fmt.Sprintf("--db=%d", redisBackupSpec.Db),
-								},
-								ImagePullPolicy: "Always",
+								Name:            "backup",
+								Image:           redisBackupSpec.Image,
+								Args:            args,
+								ImagePullPolicy: "IfNotPresent",
+								EnvFrom:         envFrom,
 							},
 						},
 					},
@@ -92,6 +118,24 @@ func getRedisBackupCronJobPatch(rbs *backupv1.RedisBackupSchedule) *v1beta1.Cron
 }
 
 func getRedisBackup(rbs *backupv1.RedisBackupSchedule, job *batchv1.Job) *backupv1.RedisBackup {
+	spec := backupv1.RedisBackupSpec{
+		Image:         rbs.Spec.Image,
+		RedisType:     rbs.Spec.RedisType,
+		Db:            rbs.Spec.Db,
+		Bucket:        rbs.Spec.Bucket,
+		S3EndpointUrl: rbs.Spec.S3EndpointUrl,
+	}
+
+	if rbs.Spec.URI != "" {
+		spec.URI = rbs.Spec.URI
+	}
+	if rbs.Spec.AWSConfigSecretName != "" {
+		spec.AWSConfigSecretName = rbs.Spec.AWSConfigSecretName
+	}
+	if rbs.Spec.URISecretName != "" {
+		spec.URISecretName = rbs.Spec.URISecretName
+	}
+
 	return &backupv1.RedisBackup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      job.Name,
@@ -102,12 +146,7 @@ func getRedisBackup(rbs *backupv1.RedisBackupSchedule, job *batchv1.Job) *backup
 			},
 			Annotations: map[string]string{},
 		},
-		Spec: backupv1.RedisBackupSpec{
-			URI:       rbs.Spec.URI,
-			Image:     rbs.Spec.Image,
-			RedisType: rbs.Spec.RedisType,
-			Db:        rbs.Spec.Db,
-		},
+		Spec: spec,
 	}
 }
 

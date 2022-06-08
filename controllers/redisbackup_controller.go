@@ -19,7 +19,6 @@ package controllers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -45,22 +44,46 @@ type RedisBackupReconciler struct {
 
 func getRedisBackupJobSpec(rb *backupv1.RedisBackup) *batchv1.JobSpec {
 	redisBackupSpec := rb.Spec
+	args := []string{
+		fmt.Sprintf("--name=%s-%s", rb.Namespace, rb.Name),
+		fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
+		fmt.Sprintf("--bucket=%s", redisBackupSpec.Bucket),
+		fmt.Sprintf("--endpoint-url=%s", redisBackupSpec.S3EndpointUrl),
+		fmt.Sprintf("--db=%d", redisBackupSpec.Db),
+	}
+	if redisBackupSpec.URI != "" {
+		args = append(args, fmt.Sprintf("--uri=%s", redisBackupSpec.URI))
+	}
+	envFrom := []corev1.EnvFromSource{}
+	if redisBackupSpec.URISecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: redisBackupSpec.URISecretName,
+				},
+			},
+		})
+	}
+	if redisBackupSpec.AWSConfigSecretName != "" {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: redisBackupSpec.AWSConfigSecretName,
+				},
+			},
+		})
+	}
 	return &batchv1.JobSpec{
 		Template: corev1.PodTemplateSpec{
 			Spec: corev1.PodSpec{
 				RestartPolicy: "Never",
 				Containers: []corev1.Container{
 					{
-						Name:  "backup",
-						Image: redisBackupSpec.Image,
-						Args: []string{
-							fmt.Sprintf("--uri=%s", redisBackupSpec.URI),
-							fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
-							"--output-stdout",
-							"--mode=dump",
-							fmt.Sprintf("--db=%d", redisBackupSpec.Db),
-						},
-						ImagePullPolicy: "Always",
+						Name:            "backup",
+						Image:           redisBackupSpec.Image,
+						Args:            args,
+						ImagePullPolicy: "IfNotPresent",
+						EnvFrom:         envFrom,
 					},
 				},
 			},
@@ -86,8 +109,15 @@ func getRedisBackupJob(rb *backupv1.RedisBackup) *batchv1.Job {
 }
 
 func getRedisBackupJobPatch(rb *backupv1.RedisBackup) *batchv1.Job {
+	spec := *getRedisBackupJobSpec(rb)
+	if rbsName, ok := rb.Labels["backup.yektanet.tech/redisbackupschedule"]; ok {
+		spec.Template.Spec.Containers[0].Args[0] = fmt.Sprintf("--name=%s-%s",
+			rb.Namespace,
+			rbsName,
+		)
+	}
 	return &batchv1.Job{
-		Spec: *getRedisBackupJobSpec(rb),
+		Spec: spec,
 	}
 }
 
@@ -112,13 +142,6 @@ func (r *RedisBackupReconciler) deleteExternalResources(ctx context.Context, rb 
 		}
 	}
 	return nil
-}
-
-func reasonAndCodeForError(err error) (metav1.StatusReason, int32) {
-	if status := k8serrors.APIStatus(nil); errors.As(err, &status) {
-		return status.Status().Reason, status.Status().Code
-	}
-	return metav1.StatusReasonUnknown, 0
 }
 
 //+kubebuilder:rbac:groups=backup.yektanet.tech,resources=redisbackups,verbs=get;list;watch;create;update;patch;delete
@@ -174,20 +197,20 @@ func (r *RedisBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if _, ok := rb.Labels["backup.yektanet.tech/job"]; !ok {
 		job := *getRedisBackupJob(&rb)
 		log.Info(fmt.Sprintf("creating Job %s for RedisBackup %s ...", job.Name, rb.Name))
-		if err := ctrl.SetControllerReference(&rb, &job, r.Scheme); err != nil {
-			log.Error(err, "unable to set controller reference on Job")
-			return ctrl.Result{}, err
-		}
-		if err := r.Create(ctx, &job); err != nil {
-			log.Error(err, "unable to create Job for RedisBackup", "job", job)
-			return ctrl.Result{}, err
-		}
 		if rb.Labels == nil {
 			rb.Labels = make(map[string]string)
 		}
 		rb.Labels["backup.yektanet.tech/job"] = job.Name
 		if err := r.Update(ctx, &rb); err != nil {
 			log.Error(err, "unable to set Job name label on RedisBackup", "RedisBackup", rb)
+			return ctrl.Result{}, err
+		}
+		if err := ctrl.SetControllerReference(&rb, &job, r.Scheme); err != nil {
+			log.Error(err, "unable to set controller reference on Job")
+			return ctrl.Result{}, err
+		}
+		if err := r.Create(ctx, &job); err != nil {
+			log.Error(err, "unable to create Job for RedisBackup", "job", job)
 			return ctrl.Result{}, err
 		}
 	} else {

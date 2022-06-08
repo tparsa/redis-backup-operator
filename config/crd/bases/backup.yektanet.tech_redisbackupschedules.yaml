@@ -36,16 +36,24 @@ spec:
           spec:
             description: RedisBackupScheduleSpec defines the desired state of RedisBackupSchedule
             properties:
+              awsConfigSecretName:
+                type: string
+              bucket:
+                type: string
               db:
                 format: int32
                 type: integer
               image:
                 type: string
-              redistype:
+              redisType:
+                type: string
+              s3EndpointUrl:
                 type: string
               schedule:
                 type: string
               uri:
+                type: string
+              uriSecretName:
                 type: string
             type: object
           status:

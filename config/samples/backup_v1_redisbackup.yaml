@@ -3,7 +3,11 @@ kind: RedisBackup
 metadata:
   name: redisbackup-sample
 spec:
-  image: tparsa/redis-backup:b32ae43
-  uri: redis://test:6379
-  redistype: single
+  image: tparsa/redis-backup-aws:0.1.2
+  uriSecretName: test-uri-secret
+  awsConfigSecretName: test-aws-secret
+  s3EndpointUrl: https://kise-thr-nd-1.sotoon.cloud 
+  bucket: yektanet-test
+  redisType: single
   db: 0
+

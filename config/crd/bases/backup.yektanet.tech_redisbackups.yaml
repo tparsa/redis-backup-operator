@@ -35,16 +35,22 @@ spec:
           spec:
             description: RedisBackupSpec defines the desired state of RedisBackup
             properties:
+              awsConfigSecretName:
+                type: string
+              bucket:
+                type: string
               db:
                 format: int32
                 type: integer
               image:
                 type: string
-              redistype:
+              redisType:
                 type: string
-              schedule:
+              s3EndpointUrl:
                 type: string
               uri:
+                type: string
+              uriSecretName:
                 type: string
             type: object
           status:

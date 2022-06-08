@@ -28,11 +28,14 @@ type RedisBackupSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	Image     string `json:"image,omitempty"`
-	URI       string `json:"uri,omitempty"`
-	RedisType string `json:"redistype,omitempty"`
-	Db        int32  `json:"db,omitempty"`
-	Schedule  string `json:"schedule,omitempty"`
+	Image               string `json:"image,omitempty"`
+	URI                 string `json:"uri,omitempty"`
+	URISecretName       string `json:"uriSecretName,omitempty"`
+	AWSConfigSecretName string `json:"awsConfigSecretName,omitempty"`
+	RedisType           string `json:"redisType,omitempty"`
+	Db                  int32  `json:"db,omitempty"`
+	Bucket              string `json:"bucket,omitempty"`
+	S3EndpointUrl       string `json:"s3EndpointUrl,omitempty"`
 }
 
 // RedisBackupStatus defines the observed state of RedisBackup
