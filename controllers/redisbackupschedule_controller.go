@@ -54,6 +54,9 @@ func getRedisBackupScheduleCronJobSpec(rbs *backupv1.RedisBackupSchedule) *v1bet
 	if redisBackupSpec.URI != "" {
 		args = append(args, fmt.Sprintf("--uri=%s", redisBackupSpec.URI))
 	}
+	if redisBackupSpec.TTL {
+		args = append(args, "--ttl")
+	}
 	envFrom := []corev1.EnvFromSource{}
 	if redisBackupSpec.URISecretName != "" {
 		envFrom = append(envFrom, corev1.EnvFromSource{

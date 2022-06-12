@@ -30,6 +30,7 @@ type RedisBackupSpec struct {
 
 	Image               string `json:"image,omitempty"`
 	URI                 string `json:"uri,omitempty"`
+	TTL                 bool   `json:"ttl,omitempty"`
 	URISecretName       string `json:"uriSecretName,omitempty"`
 	AWSConfigSecretName string `json:"awsConfigSecretName,omitempty"`
 	RedisType           string `json:"redisType,omitempty"`

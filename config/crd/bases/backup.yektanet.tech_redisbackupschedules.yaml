@@ -51,6 +51,8 @@ spec:
                 type: string
               schedule:
                 type: string
+              ttl:
+                type: boolean
               uri:
                 type: string
               uriSecretName:

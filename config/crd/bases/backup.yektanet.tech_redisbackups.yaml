@@ -48,6 +48,8 @@ spec:
                 type: string
               s3EndpointUrl:
                 type: string
+              ttl:
+                type: boolean
               uri:
                 type: string
               uriSecretName:
