@@ -3,11 +3,11 @@ kind: RedisBackup
 metadata:
   name: redisbackup-sample
 spec:
-  image: tparsa/redis-backup-aws:0.2.0
+  image: tparsa/redis-backup-aws:0.2.1
   uriSecretName: test-uri-secret
   awsConfigSecretName: test-aws-secret
   s3EndpointUrl: http://minio:9000
-  bucket: yektanet-test
+  bucket: test
   redisType: single
   db: 0
   retentionSpec:

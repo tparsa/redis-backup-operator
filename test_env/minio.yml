@@ -12,7 +12,7 @@ spec:
     - /bin/bash
     - -c
     args: 
-    - minio server /data --console-address :9090
+    - mkdir /data/test && minio server /data --console-address :9090
     volumeMounts:
     - mountPath: /data
       name: localvolume # Corresponds to the `spec.volumes` Persistent Volume
