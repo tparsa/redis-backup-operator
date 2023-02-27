@@ -44,6 +44,20 @@ type RedisBackupScheduleReconciler struct {
 
 func getRedisBackupScheduleCronJobSpec(rbs *backupv1.RedisBackupSchedule) *v1beta1.CronJobSpec {
 	redisBackupSpec := rbs.Spec
+	rs := redisBackupSpec.RetentionSpec
+	keepLast := rs.KeepLast
+	if keepLast == 0 {
+		keepLast = 1
+	}
+	retentionArgs := []string{
+		fmt.Sprintf("--keep-last=%d", keepLast),
+		fmt.Sprintf("--keep-hourly=%d", rs.KeepHourly),
+		fmt.Sprintf("--keep-daily=%d", rs.KeepDaily),
+		fmt.Sprintf("--keep-weekly=%d", rs.KeepWeekly),
+		fmt.Sprintf("--keep-monthly=%d", rs.KeepMonthly),
+		fmt.Sprintf("--keep-yearly=%d", rs.KeepYearly),
+	}
+
 	args := []string{
 		fmt.Sprintf("--name=%s-%s", rbs.Namespace, rbs.Name),
 		fmt.Sprintf("--type=%s", redisBackupSpec.RedisType),
@@ -51,6 +65,8 @@ func getRedisBackupScheduleCronJobSpec(rbs *backupv1.RedisBackupSchedule) *v1bet
 		fmt.Sprintf("--endpoint-url=%s", redisBackupSpec.S3EndpointUrl),
 		fmt.Sprintf("--db=%d", redisBackupSpec.Db),
 	}
+	args = append(args, retentionArgs...)
+
 	if redisBackupSpec.URI != "" {
 		args = append(args, fmt.Sprintf("--uri=%s", redisBackupSpec.URI))
 	}

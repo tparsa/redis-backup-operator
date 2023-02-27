@@ -47,6 +47,29 @@ spec:
                 type: string
               redisType:
                 type: string
+              retentionSpec:
+                description: RedisBackupRetentionSpec defines the desired state of
+                  backups' retention
+                properties:
+                  keepDaily:
+                    format: int32
+                    type: integer
+                  keepHourly:
+                    format: int32
+                    type: integer
+                  keepLast:
+                    format: int32
+                    type: integer
+                  keepMonthly:
+                    format: int32
+                    type: integer
+                  keepWeekly:
+                    format: int32
+                    type: integer
+                  keepYearly:
+                    format: int32
+                    type: integer
+                type: object
               s3EndpointUrl:
                 type: string
               schedule:
